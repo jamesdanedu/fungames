@@ -1,4 +1,4 @@
-// /games/Snake.js
+// /games/Snake.js - Improved Version
 import { useState, useEffect, useRef } from 'react';
 import Header from '../components/Header';
 
@@ -19,6 +19,7 @@ export default function Snake({ onBack }) {
   const nextDirectionRef = useRef('RIGHT'); // For handling quick direction changes
   const gridSizeRef = useRef(20); // Size of each grid cell
   const growthRef = useRef(false); // Whether snake should grow on next update
+  const caughtFoodRef = useRef([]); // Track food that has been caught for shrinking effect
   
   // State for UI updates
   const [score, setScore] = useState(0);
@@ -26,7 +27,17 @@ export default function Snake({ onBack }) {
   const [gameStarted, setGameStarted] = useState(false);
   const [canvasDimensions, setCanvasDimensions] = useState({ width: 0, height: 0 });
   
-  // Initialize canvas and game
+  useEffect(() => {
+    // Force a redraw after component is fully mounted
+    const timer = setTimeout(() => {
+      const ctx = canvasRef.current?.getContext('2d');
+      if (ctx) drawGame(ctx);
+    }, 500);
+    
+    return () => clearTimeout(timer);
+  }, [canvasDimensions]); // Re-run when dimensions change
+  
+  // Set up canvas
   useEffect(() => {
     // Set up canvas
     const setupCanvas = () => {
@@ -40,14 +51,21 @@ export default function Snake({ onBack }) {
       const containerWidth = container.clientWidth;
       const containerHeight = container.clientHeight;
       
+      // Ensure we have valid dimensions
+      if (containerWidth <= 0 || containerHeight <= 0) {
+        // Try again in a moment if container isn't properly sized yet
+        setTimeout(setupCanvas, 100);
+        return;
+      }
+      
       canvas.width = containerWidth;
       canvas.height = containerHeight;
       
       setCanvasDimensions({ width: containerWidth, height: containerHeight });
       
       // Calculate grid size based on canvas dimensions
-      // We want approximately 20-30 cells horizontally
-      const gridSize = Math.floor(containerWidth / 25);
+      // We want approximately 40-50 cells horizontally (smaller cells)
+      const gridSize = Math.floor(containerWidth / 40);
       gridSizeRef.current = gridSize;
       
       // Draw initial screen
@@ -55,25 +73,35 @@ export default function Snake({ onBack }) {
       if (ctx) drawGame(ctx);
     };
     
-    // Call immediately and on resize
-    setupCanvas();
+    // Call with a slight delay to ensure DOM is fully rendered
+    setTimeout(setupCanvas, 100);
+    
+    // Also handle window resize events
     window.addEventListener('resize', setupCanvas);
     
     // Load high score from localStorage if available
-    const savedHighScore = localStorage.getItem('snakeHighScore');
-    if (savedHighScore) {
-      setHighScore(parseInt(savedHighScore, 10));
+    try {
+      const savedHighScore = localStorage.getItem('snakeHighScore');
+      if (savedHighScore) {
+        setHighScore(parseInt(savedHighScore, 10));
+      }
+    } catch (e) {
+      console.log('Could not access localStorage');
     }
     
     // Handle keyboard input
     const handleKeyDown = (e) => {
+      console.log("Key pressed:", e.key);  // Debug log
+      
       if (!gameActiveRef.current && !gameOverRef.current && 
           (e.key === 'Enter' || e.key === ' ')) {
         // Start game on Enter or Space
+        console.log("Starting game from keyboard");
         startGame();
       } else if (gameOverRef.current && 
                 (e.key === 'Enter' || e.key === ' ')) {
         // Restart game on Enter or Space when game over
+        console.log("Restarting game from keyboard");
         resetGame();
         startGame();
       } else if (e.key === 'Escape') {
@@ -126,9 +154,25 @@ export default function Snake({ onBack }) {
     };
   }, [onBack]);
   
+  // Handle canvas click (added to make game start on click)
+  const handleCanvasClick = () => {
+    console.log("Canvas clicked"); // Debug log
+    
+    if (!gameActiveRef.current && !gameOverRef.current) {
+      // Start game on click when not active
+      console.log("Starting game from click");
+      startGame();
+    } else if (gameOverRef.current) {
+      // Restart game on click when game over
+      console.log("Restarting game from click");
+      resetGame();
+      startGame();
+    }
+  };
+  
   // Game control functions
   const startGame = () => {
-    if (gameActiveRef.current) return;
+    console.log("startGame called");  // Debug log
     
     // Reset game state
     resetGame();
@@ -160,7 +204,7 @@ export default function Snake({ onBack }) {
         updateGame();
         
         // Draw game
-        const ctx = canvasRef.current.getContext('2d');
+        const ctx = canvasRef.current?.getContext('2d');
         if (ctx) drawGame(ctx);
         
         // Update timestamp
@@ -171,6 +215,7 @@ export default function Snake({ onBack }) {
       animationRef.current = requestAnimationFrame(gameLoop);
     }
     
+    // Start the loop immediately
     animationRef.current = requestAnimationFrame(gameLoop);
   };
   
@@ -182,7 +227,10 @@ export default function Snake({ onBack }) {
     }
   };
   
+  // Reset game
   const resetGame = () => {
+    console.log("Resetting game");  // Debug log
+    
     // Reset snake
     snakeRef.current = [{ x: 10, y: 10 }];
     
@@ -196,8 +244,14 @@ export default function Snake({ onBack }) {
     // Reset growth flag
     growthRef.current = false;
     
+    // Reset caught food
+    caughtFoodRef.current = [];
+    
     // Reset game state
     gameOverRef.current = false;
+    
+    // Generate new food
+    generateFood();
     
     // Draw initial screen
     const ctx = canvasRef.current?.getContext('2d');
@@ -237,6 +291,14 @@ export default function Snake({ onBack }) {
     const snake = snakeRef.current;
     const food = foodRef.current;
     const direction = directionRef.current;
+    
+    // Make sure dimensions are available
+    if (canvasDimensions.width <= 0 || canvasDimensions.height <= 0) {
+      return; // Skip update if dimensions aren't available yet
+    }
+    
+    // Update caught food animation (shrink them)
+    updateCaughtFood();
     
     // Update direction from next direction
     directionRef.current = nextDirectionRef.current;
@@ -293,6 +355,14 @@ export default function Snake({ onBack }) {
       // Don't remove tail (snake grows)
       growthRef.current = true;
       
+      // Add the food to caught food list for animation
+      caughtFoodRef.current.push({
+        x: food.x,
+        y: food.y,
+        size: 1.0, // Start at full size
+        timeAdded: performance.now()
+      });
+      
       // Generate new food
       generateFood();
       
@@ -303,7 +373,11 @@ export default function Snake({ onBack }) {
       // Update high score if needed
       if (newScore > highScore) {
         setHighScore(newScore);
-        localStorage.setItem('snakeHighScore', newScore.toString());
+        try {
+          localStorage.setItem('snakeHighScore', newScore.toString());
+        } catch (e) {
+          console.log('Could not save to localStorage');
+        }
       }
       
       // Increase speed (make the game harder as snake grows)
@@ -316,6 +390,23 @@ export default function Snake({ onBack }) {
         growthRef.current = false;
       }
     }
+  };
+  
+  // Update caught food items (shrink them over time)
+  const updateCaughtFood = () => {
+    const now = performance.now();
+    const shrinkDuration = 2000; // 2 seconds to disappear
+    
+    // Update each caught food item
+    caughtFoodRef.current = caughtFoodRef.current.filter(item => {
+      const elapsed = now - item.timeAdded;
+      
+      // Calculate new size (linear shrink)
+      item.size = Math.max(0, 1.0 - (elapsed / shrinkDuration));
+      
+      // Keep the item if it's still visible
+      return item.size > 0.05;
+    });
   };
   
   // Handle game over
@@ -333,6 +424,9 @@ export default function Snake({ onBack }) {
     if (!ctx) return;
     
     const { width, height } = canvasDimensions;
+    // Ensure we have valid dimensions
+    if (width <= 0 || height <= 0) return;
+    
     const gridSize = gridSizeRef.current;
     
     // Clear canvas
@@ -370,6 +464,23 @@ export default function Snake({ onBack }) {
       gridSize,
       gridSize
     );
+    
+    // Draw caught food (with shrinking effect)
+    caughtFoodRef.current.forEach(item => {
+      // Use a different color for caught food
+      ctx.fillStyle = `rgba(255, 99, 71, ${item.size})`;
+      
+      // Calculate size and position for shrinking effect
+      const currentSize = gridSize * item.size;
+      const offset = (gridSize - currentSize) / 2;
+      
+      ctx.fillRect(
+        item.x * gridSize + offset,
+        item.y * gridSize + offset,
+        currentSize,
+        currentSize
+      );
+    });
     
     // Draw snake
     const snake = snakeRef.current;
@@ -445,9 +556,10 @@ export default function Snake({ onBack }) {
       
       ctx.font = `${Math.max(16, gridSize)}px Arial`;
       ctx.fillText('Press ENTER or SPACE to Start', width / 2, height * 0.5);
+      ctx.fillText('Or Click/Tap Anywhere', width / 2, height * 0.57);
       
       ctx.font = `${Math.max(14, gridSize * 0.8)}px Arial`;
-      ctx.fillText('Use Arrow Keys or WASD to control', width / 2, height * 0.58);
+      ctx.fillText('Use Arrow Keys or WASD to control', width / 2, height * 0.65);
     }
     
     // Draw game over screen
@@ -471,6 +583,7 @@ export default function Snake({ onBack }) {
       }
       
       ctx.fillText('Press ENTER or SPACE to Play Again', width / 2, height * 0.65);
+      ctx.fillText('Or Click/Tap Anywhere', width / 2, height * 0.72);
     }
   };
   
@@ -497,18 +610,43 @@ export default function Snake({ onBack }) {
             <div 
               ref={containerRef} 
               className="flex-grow flex items-center justify-center w-full h-full bg-gray-800"
-              style={{ position: 'relative' }}
+              onClick={handleCanvasClick} /* Added click handler */
+              style={{ 
+                position: 'relative', 
+                cursor: 'pointer',
+                minHeight: '300px'  // Ensure minimum height
+              }}
             >
               <canvas 
                 ref={canvasRef}
                 className="absolute inset-0"
+                onClick={handleCanvasClick}  // Add click handler directly to canvas too
                 style={{ 
-                  cursor: 'pointer',
                   display: 'block',
                   width: '100%',
                   height: '100%'
                 }}
               />
+              {/* Add start button overlay */}
+              {!gameStarted && !gameOverRef.current && (
+                <div 
+                  className="absolute inset-0 flex flex-col items-center justify-center text-white text-xl bg-black bg-opacity-50"
+                  onClick={handleCanvasClick}
+                >
+                  <div className="mb-4 text-3xl font-bold">SNAKE</div>
+                  <button 
+                    className="px-6 py-3 mb-4 bg-green-600 rounded-lg hover:bg-green-500 text-white font-bold text-xl"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      console.log("Start button clicked");
+                      startGame();
+                    }}
+                  >
+                    Start Game
+                  </button>
+                  <div>Press SPACE or ENTER to start</div>
+                </div>
+              )}
             </div>
           </div>
           
