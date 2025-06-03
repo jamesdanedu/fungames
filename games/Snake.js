@@ -1,4 +1,4 @@
-// /games/Snake.js - Improved Version
+// /games/Snake.js - Fixed Version
 import { useState, useEffect, useRef } from 'react';
 import Header from '../components/Header';
 
@@ -11,6 +11,7 @@ export default function Snake({ onBack }) {
   const animationRef = useRef(null);
   const lastUpdateTimeRef = useRef(0);
   const updateIntervalRef = useRef(150); // ms between updates (lower = faster)
+  const setupTimerRef = useRef(null); // Reference to hold the setup timer
   
   // Game state
   const snakeRef = useRef([{ x: 10, y: 10 }]); // Snake segments starting with head
@@ -20,6 +21,7 @@ export default function Snake({ onBack }) {
   const gridSizeRef = useRef(20); // Size of each grid cell
   const growthRef = useRef(false); // Whether snake should grow on next update
   const caughtFoodRef = useRef([]); // Track food that has been caught for shrinking effect
+  const scoreRef = useRef(0); // Reference to track score internally
   
   // State for UI updates
   const [score, setScore] = useState(0);
@@ -29,17 +31,17 @@ export default function Snake({ onBack }) {
   
   useEffect(() => {
     // Force a redraw after component is fully mounted
-    const timer = setTimeout(() => {
+    const redrawTimer = setTimeout(() => {
       const ctx = canvasRef.current?.getContext('2d');
       if (ctx) drawGame(ctx);
     }, 500);
     
-    return () => clearTimeout(timer);
+    return () => clearTimeout(redrawTimer);
   }, [canvasDimensions]); // Re-run when dimensions change
   
   // Set up canvas
   useEffect(() => {
-    // Set up canvas
+    // Initialize the game - this runs once on component mount
     const setupCanvas = () => {
       const container = containerRef.current;
       if (!container) return;
@@ -54,7 +56,7 @@ export default function Snake({ onBack }) {
       // Ensure we have valid dimensions
       if (containerWidth <= 0 || containerHeight <= 0) {
         // Try again in a moment if container isn't properly sized yet
-        setTimeout(setupCanvas, 100);
+        setupTimerRef.current = setTimeout(setupCanvas, 100);
         return;
       }
       
@@ -68,16 +70,31 @@ export default function Snake({ onBack }) {
       const gridSize = Math.floor(containerWidth / 40);
       gridSizeRef.current = gridSize;
       
+      // Set initial snake position based on grid size
+      snakeRef.current = [{ 
+        x: Math.floor((containerWidth / gridSize) / 4), 
+        y: Math.floor((containerHeight / gridSize) / 2) 
+      }];
+      
       // Draw initial screen
       const ctx = canvas.getContext('2d');
       if (ctx) drawGame(ctx);
     };
     
     // Call with a slight delay to ensure DOM is fully rendered
-    setTimeout(setupCanvas, 100);
+    setupTimerRef.current = setTimeout(setupCanvas, 100);
     
     // Also handle window resize events
-    window.addEventListener('resize', setupCanvas);
+    const handleResize = () => {
+      // Clear any existing resize timer
+      if (setupTimerRef.current) {
+        clearTimeout(setupTimerRef.current);
+      }
+      // Set a new timer to avoid too many resize calls
+      setupTimerRef.current = setTimeout(setupCanvas, 100);
+    };
+    
+    window.addEventListener('resize', handleResize);
     
     // Load high score from localStorage if available
     try {
@@ -91,17 +108,20 @@ export default function Snake({ onBack }) {
     
     // Handle keyboard input
     const handleKeyDown = (e) => {
-      console.log("Key pressed:", e.key);  // Debug log
+      // Prevent default browser behavior for game control keys
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 
+           'w', 'a', 's', 'd', 'W', 'A', 'S', 'D', 
+           ' ', 'Enter', 'Escape'].includes(e.key)) {
+        e.preventDefault();
+      }
       
       if (!gameActiveRef.current && !gameOverRef.current && 
           (e.key === 'Enter' || e.key === ' ')) {
         // Start game on Enter or Space
-        console.log("Starting game from keyboard");
         startGame();
       } else if (gameOverRef.current && 
                 (e.key === 'Enter' || e.key === ' ')) {
         // Restart game on Enter or Space when game over
-        console.log("Restarting game from keyboard");
         resetGame();
         startGame();
       } else if (e.key === 'Escape') {
@@ -148,23 +168,25 @@ export default function Snake({ onBack }) {
     window.addEventListener('keydown', handleKeyDown);
     
     return () => {
-      window.removeEventListener('resize', setupCanvas);
+      window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
+      // Cancel any pending animation frames
       stopGame();
+      // Clear any pending timers
+      if (setupTimerRef.current) {
+        clearTimeout(setupTimerRef.current);
+      }
     };
   }, [onBack]);
   
-  // Handle canvas click (added to make game start on click)
-  const handleCanvasClick = () => {
-    console.log("Canvas clicked"); // Debug log
-    
+  // Handle canvas click (simplified for single-click game start)
+  const handleCanvasClick = (e) => {
+    // Handle click based on game state
     if (!gameActiveRef.current && !gameOverRef.current) {
       // Start game on click when not active
-      console.log("Starting game from click");
       startGame();
     } else if (gameOverRef.current) {
       // Restart game on click when game over
-      console.log("Restarting game from click");
       resetGame();
       startGame();
     }
@@ -172,8 +194,6 @@ export default function Snake({ onBack }) {
   
   // Game control functions
   const startGame = () => {
-    console.log("startGame called");  // Debug log
-    
     // Reset game state
     resetGame();
     
@@ -188,12 +208,14 @@ export default function Snake({ onBack }) {
     // Start animation loop
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
     }
     
     lastUpdateTimeRef.current = performance.now();
     updateIntervalRef.current = 150; // Reset speed
     
-    function gameLoop(timestamp) {
+    const gameLoop = (timestamp) => {
+      // Check if game is still active
       if (!gameActiveRef.current) return;
       
       // Check if it's time for a game update
@@ -213,7 +235,7 @@ export default function Snake({ onBack }) {
       
       // Continue loop
       animationRef.current = requestAnimationFrame(gameLoop);
-    }
+    };
     
     // Start the loop immediately
     animationRef.current = requestAnimationFrame(gameLoop);
@@ -229,17 +251,22 @@ export default function Snake({ onBack }) {
   
   // Reset game
   const resetGame = () => {
-    console.log("Resetting game");  // Debug log
+    const { width, height } = canvasDimensions;
+    const gridSize = gridSizeRef.current;
     
-    // Reset snake
-    snakeRef.current = [{ x: 10, y: 10 }];
+    // Reset snake to a better starting position
+    snakeRef.current = [{ 
+      x: Math.floor((width / gridSize) / 4), 
+      y: Math.floor((height / gridSize) / 2) 
+    }];
     
     // Reset direction
     directionRef.current = 'RIGHT';
     nextDirectionRef.current = 'RIGHT';
     
-    // Reset score
+    // Reset score in both state and ref
     setScore(0);
+    scoreRef.current = 0;
     
     // Reset growth flag
     growthRef.current = false;
@@ -261,6 +288,8 @@ export default function Snake({ onBack }) {
   // Generate food at random position (not on snake)
   const generateFood = () => {
     const { width, height } = canvasDimensions;
+    if (width <= 0 || height <= 0) return; // Skip if dimensions aren't available
+    
     const gridSize = gridSizeRef.current;
     
     // Calculate grid dimensions
@@ -366,22 +395,25 @@ export default function Snake({ onBack }) {
       // Generate new food
       generateFood();
       
-      // Increase score
-      const newScore = score + 1;
-      setScore(newScore);
+      // Update the score in the ref first
+      scoreRef.current += 1;
+      
+      // Then update the React state for UI
+      setScore(scoreRef.current);
       
       // Update high score if needed
-      if (newScore > highScore) {
-        setHighScore(newScore);
+      if (scoreRef.current > highScore) {
+        setHighScore(scoreRef.current);
         try {
-          localStorage.setItem('snakeHighScore', newScore.toString());
+          localStorage.setItem('snakeHighScore', scoreRef.current.toString());
         } catch (e) {
           console.log('Could not save to localStorage');
         }
       }
       
       // Increase speed (make the game harder as snake grows)
-      updateIntervalRef.current = Math.max(50, 150 - (newScore * 2));
+      updateIntervalRef.current = Math.max(50, 150 - (scoreRef.current * 2));
+      
     } else {
       // Remove tail if not growing
       if (!growthRef.current) {
@@ -544,47 +576,38 @@ export default function Snake({ onBack }) {
     ctx.textAlign = 'right';
     ctx.fillText(`High Score: ${highScore}`, width - gridSize, gridSize * 1.5);
     
-    // Draw start screen
+    // Draw start screen - simplified to just show key info
     if (!gameStarted && !gameOverRef.current) {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(0, 0, width, height);
-      
-      ctx.fillStyle = 'white';
-      ctx.font = `bold ${Math.max(24, gridSize * 1.5)}px Arial`;
-      ctx.textAlign = 'center';
-      ctx.fillText('SNAKE', width / 2, height * 0.4);
-      
-      ctx.font = `${Math.max(16, gridSize)}px Arial`;
-      ctx.fillText('Press ENTER or SPACE to Start', width / 2, height * 0.5);
-      ctx.fillText('Or Click/Tap Anywhere', width / 2, height * 0.57);
-      
-      ctx.font = `${Math.max(14, gridSize * 0.8)}px Arial`;
-      ctx.fillText('Use Arrow Keys or WASD to control', width / 2, height * 0.65);
+      // No need to draw anything here since we're using the overlay div for better interactivity
+      // This allows the canvas to be visible underneath
     }
     
-    // Draw game over screen
-    if (gameOverRef.current) {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(0, 0, width, height);
-      
+    // Game over screen - simplified and made more clickable
+  if (gameOverRef.current) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, width, height);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = `bold ${Math.max(24, gridSize * 1.5)}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', width / 2, height * 0.4);
+    
+    ctx.font = `${Math.max(16, gridSize)}px Arial`;
+    ctx.fillText(`Score: ${score}`, width / 2, height * 0.5);
+    
+    // Show "New High Score!" if applicable
+    if (score === highScore && score > 0) {
+      ctx.fillStyle = '#FFD700'; // Gold
+      ctx.fillText('New High Score!', width / 2, height * 0.56);
       ctx.fillStyle = 'white';
-      ctx.font = `bold ${Math.max(24, gridSize * 1.5)}px Arial`;
-      ctx.textAlign = 'center';
-      ctx.fillText('GAME OVER', width / 2, height * 0.4);
-      
-      ctx.font = `${Math.max(16, gridSize)}px Arial`;
-      ctx.fillText(`Score: ${score}`, width / 2, height * 0.5);
-      
-      // Show "New High Score!" if applicable
-      if (score === highScore && score > 0) {
-        ctx.fillStyle = '#FFD700'; // Gold
-        ctx.fillText('New High Score!', width / 2, height * 0.56);
-        ctx.fillStyle = 'white';
-      }
-      
-      ctx.fillText('Press ENTER or SPACE to Play Again', width / 2, height * 0.65);
-      ctx.fillText('Or Click/Tap Anywhere', width / 2, height * 0.72);
     }
+    
+    ctx.fillStyle = '#4CAF50'; // Green highlight for call to action
+    ctx.fillRect(width/2 - 150, height * 0.65 - 25, 300, 50);
+    ctx.fillStyle = 'white';
+    ctx.font = `bold ${Math.max(16, gridSize)}px Arial`;
+    ctx.fillText('Click Anywhere to Play Again', width / 2, height * 0.65);
+  }
   };
   
   return (
@@ -610,7 +633,7 @@ export default function Snake({ onBack }) {
             <div 
               ref={containerRef} 
               className="flex-grow flex items-center justify-center w-full h-full bg-gray-800"
-              onClick={handleCanvasClick} /* Added click handler */
+              onClick={handleCanvasClick}
               style={{ 
                 position: 'relative', 
                 cursor: 'pointer',
@@ -620,31 +643,24 @@ export default function Snake({ onBack }) {
               <canvas 
                 ref={canvasRef}
                 className="absolute inset-0"
-                onClick={handleCanvasClick}  // Add click handler directly to canvas too
+                onClick={handleCanvasClick}  // Add click handler directly to canvas
                 style={{ 
                   display: 'block',
                   width: '100%',
                   height: '100%'
                 }}
               />
-              {/* Add start button overlay */}
+              {/* Simple, clear start overlay that's clickable anywhere */}
               {!gameStarted && !gameOverRef.current && (
                 <div 
-                  className="absolute inset-0 flex flex-col items-center justify-center text-white text-xl bg-black bg-opacity-50"
-                  onClick={handleCanvasClick}
+                  className="absolute inset-0 flex flex-col items-center justify-center text-white text-xl bg-black bg-opacity-50 cursor-pointer"
+                  onClick={() => startGame()}
                 >
                   <div className="mb-4 text-3xl font-bold">SNAKE</div>
-                  <button 
-                    className="px-6 py-3 mb-4 bg-green-600 rounded-lg hover:bg-green-500 text-white font-bold text-xl"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      console.log("Start button clicked");
-                      startGame();
-                    }}
-                  >
-                    Start Game
-                  </button>
-                  <div>Press SPACE or ENTER to start</div>
+                  <div className="px-6 py-3 mb-4 bg-green-600 rounded-lg text-white font-bold text-xl animate-pulse">
+                    Click Anywhere to Start
+                  </div>
+                  <div className="text-base">Or Press SPACE / ENTER</div>
                 </div>
               )}
             </div>
